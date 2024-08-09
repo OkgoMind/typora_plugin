@@ -1,25 +1,31 @@
 const require = self.require;
-const fs = require("fs");
+const fs = require("fs").promises;
 
-let markdownlinter = null;
-let disableRules = null;
+let linter = null;
+const config = { default: true, MD024: { siblings_only: true } };
 
-const init = rules => {
-    markdownlinter = require("./markdownlint.min").markdownlint;
-    const result = { "default": true };
-    for (const rule of rules) {
-        result[rule] = false;
+const init = disabled => {
+    const { markdownlint } = require("./markdownlint.min");
+    linter = markdownlint;
+
+    for (const rule of disabled) {
+        config[rule] = false;
     }
-    disableRules = result;
-    console.debug("markdown linter worker is initialized");
+
+    console.debug(`markdown linter worker is initialized with rules`, config);
 }
 
-const lint = async filepath => {
-    if (!markdownlinter || !disableRules) return;
-    const fileContent = await fs.promises.readFile(filepath, 'utf-8');
-    const { content } = markdownlinter.sync({ strings: { content: fileContent }, config: disableRules });
+const lintContent = fileContent => {
+    if (!linter) return;
+    const { content } = linter.sync({ strings: { content: fileContent }, config });
     content.sort((a, b) => a.lineNumber - b.lineNumber);
     return content
+}
+
+const lintPath = async filepath => {
+    if (!linter) return;
+    const fileContent = await fs.readFile(filepath, "utf-8");
+    return lintContent(fileContent)
 }
 
 self.onmessage = async ({ data: { action, payload } }) => {
@@ -27,8 +33,11 @@ self.onmessage = async ({ data: { action, payload } }) => {
 
     if (action === "init") {
         init(payload);
-    } else if (action === "lint") {
-        const result = await lint(payload);
+    } else if (action === "lint-path") {
+        const result = await lintPath(payload);
+        self.postMessage(result);
+    } else if (action === "lint-content") {
+        const result = await lintContent(payload);
         self.postMessage(result);
     } else {
         console.error("get error action:", action);
